@@ -16,6 +16,7 @@ from .const import (
     DEF_POLL_INTERVAL,
     DEF_REFRESH_INTERVAL,
     DEF_CHANGE_THRESHOLD,
+    DEF_UNAVAILABLE_PAYLOAD,
 )
 
 _LOGGER = logging.getLogger(APP_NAME)
@@ -30,8 +31,9 @@ class TemperdApp(MQTTBaseApp):
 
         self.change_threshold: float = args["change_threshold"]
         self.poll_interval = timedelta(seconds=args["poll_interval"])
+        self.unavailable_payload = args["unavailable_payload"]
         self.next_refresh = datetime.now()
-        self.last_value = None
+        self.last_temp_ext = None
         self.tobj = None
 
     @classmethod
@@ -48,6 +50,12 @@ class TemperdApp(MQTTBaseApp):
             default=DEF_CHANGE_THRESHOLD,
             help="Minimum change threshold for sending MQTT updates",
         )
+        parser.add_argument(
+            "--unavailable-payload",
+            type=str,
+            default=DEF_UNAVAILABLE_PAYLOAD,
+            help="Payload to publish to topic if sensor is unavailable",
+        )
         parser.set_defaults(refresh_interval=DEF_REFRESH_INTERVAL)
 
     def setup(self, args) -> None:
@@ -63,45 +71,59 @@ class TemperdApp(MQTTBaseApp):
     def handle_event(self, event):
         """Handle temperd app event."""
 
-        def publish_sensor(force: bool = False) -> None:
+        def publish_sensor(force: bool = False) -> bool:
             payload = None
             result = self.tobj.read()
             if type(result) is list and len(result) > 0:
                 try:
-                    current_value = float(result[0]["external temperature"])
+                    cur_temp_int = float(result[0]["internal temperature"])
+                except:
+                    cur_temp_int = None
+                try:
+                    cur_temp_ext = float(result[0]["external temperature"])
                     if (
                         force
-                        or self.last_value is None
-                        or abs(self.last_value - current_value) >= self.change_threshold
+                        or self.last_temp_ext is None
+                        or abs(self.last_temp_ext - cur_temp_ext)
+                        >= self.change_threshold
                     ):
-                        _LOGGER.debug(
-                            "publishing updated sensor value: %f", current_value
-                        )
-                        self.last_value = current_value
-                        payload = json.dumps(result[0])
+                        payload = {"internal": cur_temp_int, "external": cur_temp_ext}
+                        self.last_temp_ext = cur_temp_ext
                         self.publish_mqtt(
-                            self.mqtt_topic, payload, self.mqtt_qos, self.mqtt_retain
+                            self.mqtt_topic,
+                            json.dumps(payload),
+                            self.mqtt_qos,
+                            self.mqtt_retain,
                         )
                         self.next_refresh = datetime.now() + self.refresh_interval
                         _LOGGER.debug(
                             "next refresh scheduled for %s", self.next_refresh
                         )
+                        return True
+
+                    ## Sensor update skipped
+                    return False
                 except:
                     pass
 
-            if payload:
-                return
-            return False
+                ## Sensor didn't return usable value, send unavailable payload
+                self.publish_mqtt(
+                    self.mqtt_topic,
+                    self.unavailable_payload,
+                    self.mqtt_qos,
+                    self.mqtt_retain,
+                )
 
-        match event:
-            case MQTTConnectEvent():
-                publish_sensor(force=True)
-            case RefreshEvent():
-                force = datetime.now() >= self.next_refresh
-                _LOGGER.debug("force = %s", force)
-                publish_sensor(force=force)
-            case _:
-                _LOGGER.error("unknown event type %s", type(event).__name__)
+            return None
+
+        if isinstance(event, MQTTConnectEvent):
+            publish_sensor(force=True)
+        elif isinstance(event, RefreshEvent):
+            force = datetime.now() >= self.next_refresh
+            _LOGGER.debug("force = %s", force)
+            publish_sensor(force=force)
+        else:
+            _LOGGER.error("unknown event type %s", type(event).__name__)
 
 
 def main():
