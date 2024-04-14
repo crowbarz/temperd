@@ -19,6 +19,7 @@ from .const import (
     DEF_REFRESH_INTERVAL,
     DEF_CHANGE_THRESHOLD,
     DEF_UNAVAILABLE_PAYLOAD,
+    MIN_POLL_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(APP_NAME)
@@ -50,7 +51,7 @@ class TemperdApp(MQTTBaseApp):
             "--poll-interval",
             type=float,
             default=DEF_POLL_INTERVAL,
-            help="Frequency of polling the temper device",
+            help=f"Frequency of polling the temper device (minimum: {MIN_POLL_INTERVAL})",
         )
         parser.add_argument(
             "--change-threshold",
@@ -74,7 +75,9 @@ class TemperdApp(MQTTBaseApp):
 
     def get_refresh_interval(self) -> float:
         """Determine time of next event."""
-        return min(self.poll_interval, self.next_refresh - datetime.now())
+        return min(
+            MIN_POLL_INTERVAL, self.poll_interval, self.next_refresh - datetime.now()
+        )
 
     def get_mqtt_discovery_config(self, device_config: dict) -> dict:
         """Return MQTT discovery config."""
@@ -168,6 +171,7 @@ class TemperdApp(MQTTBaseApp):
                 self.mqtt_qos,
                 self.mqtt_retain,
             )
+            self.next_refresh = datetime.now() + self.refresh_interval
             return None
 
     def handle_event(self, event):
