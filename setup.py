@@ -31,6 +31,7 @@ setuptools.setup(
     install_requires=[
         "mqtt-base @ git+https://github.com/crowbarz/mqtt-base.git",
         "temper-py @ git+https://github.com/ccwienk/temper.git@4d1d3a2e3865241dd1c44696804c24b124cb901a",
+        "python-slugify==8.0.1",
     ],
     entry_points={
         "console_scripts": [
